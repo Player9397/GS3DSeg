@@ -67,6 +67,10 @@ GS3DSeg_method = MethodSpecification(
                     lr_final=5e-7, max_steps=30000, warmup_steps=1000, lr_pre_warmup=0
                 ),
             },
+            "identity_vec": {
+                "optimizer": AdamOptimizerConfig(lr=0.0025, eps=1e-15),
+                "scheduler": None,
+            },
         },
         viewer=ViewerConfig(num_rays_per_chunk=1 << 15),
         vis="viewer",
