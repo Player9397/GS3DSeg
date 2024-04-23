@@ -1,0 +1,13 @@
+[project]
+name = "GS3DSeg"
+description = "Template repository for creating and registering new methods in nerfstudio."
+version = "0.1.0"
+
+dependencies = ["nerfstudio >= 0.3.0"] 
+
+[tool.setuptools.packages.find]
+include = ["GS3DSeg*"]
+
+# register the entry point of your new method here:
+[project.entry-points.'nerfstudio.method_configs']
+GS3DSeg = 'GS3DSeg.GS3DSeg_config:GS3DSeg_method'
