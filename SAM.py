@@ -6,6 +6,7 @@ from tqdm import tqdm
 
 parent_dir = '/scratch/ashwin/gsplat/waldo_kitchen/images'
 sam = sam_model_registry["vit_l"](checkpoint="/scratch/ashwin/gsplat/sam_vit_l_0b3195.pth")
+sam = sam.to('cuda')
 mask_generator = SamAutomaticMaskGenerator(sam)
 annotation_path = os.path.split(parent_dir)[0] + '/Sam_annotations'
 if os.path.exists(annotation_path):

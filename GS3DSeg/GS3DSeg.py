@@ -56,7 +56,7 @@ class GS3DSeg(SplatfactoModel):
         self.identity_vec = torch.nn.Parameter(torch.rand([self.num_points, 16]))
          # enter path to Sam embeddings
         self.embd_path = '/scratch/ashwin/gsplat/waldo_kitchen/Sam_annotations/final.npy'
-        self.identity = torch.from_numpy(np.load(self.embd_path)).to(DEVICE)
+        self.identity = torch.from_numpy(np.load(self.embd_path)).to(DEVICE).type(torch.uint8)
         # self.train_image_list  = [p.name for p in self.train_image_list]
         # torch_embd = torch.ones([1,738, 994 ])
         # for im in tqdm(self.train_image_list):
@@ -477,27 +477,26 @@ class GS3DSeg(SplatfactoModel):
     
     def identity_loss(self, outputs, batch):
         predicted_identity = outputs['identity']
-        print(self.identity[0, :, :])
         gt_identity = self.identity[batch['image_idx'], :, :]
         assert predicted_identity.shape[:2] == gt_identity.shape[:2]
-        predicted_identity = predicted_identity.reshape(-1, 16)
-        gt_identity = gt_identity.reshape(-1)
+        # predicted_identity = predicted_identity.reshape(-1, 16)
+        # gt_identity = gt_identity.reshape(-1)
 
         num_masks = torch.max(gt_identity)
         Pos, Neg = torch.tensor([0.], device=DEVICE), torch.tensor([0.], device=DEVICE)
         for i in range(num_masks):
-            print(gt_identity)
-            mask = gt_identity == i
-            print(mask)
-            _pos_matrix = predicted_identity[mask]
-            print(_pos_matrix)
-
+            mask = gt_identity.view(-1) == i
+            _pos_matrix = predicted_identity.view(-1, 16)[mask]
+            _pos_matrix = _pos_matrix[torch.randperm(_pos_matrix.shape[0])[:100]]
+            _pos_matrix = torch.nn.functional.normalize(_pos_matrix, dim=1)
             pos_matrix = torch.mm(_pos_matrix, _pos_matrix.T)
-            assert torch.all(pos_matrix <= 1.1)
+            # assert torch.all(pos_matrix <= 1.5)
             Pos += torch.mean(1 - pos_matrix)
-            neg_matrix = predicted_identity[~mask]
+            neg_matrix = predicted_identity.view(-1, 16)[~mask]
+            neg_matrix = neg_matrix[torch.randperm(neg_matrix.shape[0])[:200]]
+            neg_matrix = torch.nn.functional.normalize(neg_matrix, dim=1)
             neg_matrix = torch.mm(neg_matrix, _pos_matrix.T)
-            assert all(neg_matrix <= 1.1)
+            # assert torch.all(neg_matrix <= 1.5)
             neg_matrix = torch.nn.ReLU()(neg_matrix - 0.5)
             Neg += torch.mean(neg_matrix)
         return Pos, Neg
