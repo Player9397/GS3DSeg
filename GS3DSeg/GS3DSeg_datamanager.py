@@ -43,6 +43,8 @@ class GS3DSegDataManager(FullImageDatamanager):
         
         # Some logic to make sure we sample every camera in equal amounts
         self.editing_unseen_cameras = [i for i in range(len(self.train_dataset))]
+        self.train_image_list = self.train_dataset.image_filenames
+        self.eval_image_list  = self.eval_dataset.image_filenames
 
         
     def next_train_idx(self, idx: int) -> Tuple[Cameras, Dict]:
