@@ -18,7 +18,9 @@ for image_name in tqdm(os.listdir(parent_dir)):
     masks = mask_generator.generate(np.array(Image.open(parent_dir + '/'+image_name)))
     im_mask = np.ones([738, 994]) * 250
     for i, mask in enumerate(masks):
-        for k, val in mask.items():
-            im_mask[np.array(mask, bool)] = i
-    assert np.all(im_mask < 249)
+        # for k, val in mask.items():
+        #     print(k, val)
+        im_mask[np.array(mask['segmentation'], bool)] = i
+    assert np.all(im_mask < 500)
     np.save(annotation_path+'/'+image_name+'.npy', im_mask)
+    

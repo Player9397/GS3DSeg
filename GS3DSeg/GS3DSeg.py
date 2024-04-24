@@ -11,14 +11,14 @@ from nerfstudio.engine.optimizers import Optimizers
 import math
 from dataclasses import dataclass, field
 from typing import Dict, List, Type, Union, Optional
-
+from gsplat.sh import num_sh_bases, spherical_harmonics
 import numpy as np
 import torch
 from gsplat.project_gaussians import project_gaussians
 from gsplat.rasterize import rasterize_gaussians
 from gsplat.sh import spherical_harmonics
-
-
+from tqdm import tqdm
+DEVICE = 'cuda'
 # need following import for background color override
 from nerfstudio.model_components import renderers
 from nerfstudio.utils.rich_utils import CONSOLE
@@ -54,9 +54,33 @@ class GS3DSeg(SplatfactoModel):
     def populate_modules(self):
         super().populate_modules()
         self.identity_vec = torch.nn.Parameter(torch.rand([self.num_points, 16]))
+         # enter path to Sam embeddings
+        self.embd_path = '/scratch/ashwin/gsplat/waldo_kitchen/Sam_annotations/final.npy'
+        self.identity = torch.from_numpy(np.load(self.embd_path)).to(DEVICE)
+        # self.train_image_list  = [p.name for p in self.train_image_list]
+        # torch_embd = torch.ones([1,738, 994 ])
+        # for im in tqdm(self.train_image_list):
+        #     embd = torch.from_numpy(np.load(embd_path+'/'+im+'.npy'))
+        #     torch_embd = torch.cat([torch_embd, embd.unsqueeze(0)], dim=0)
+        # self.torch_embd = torch_embd[1:, :, :].type(dtype=torch.uint8)
     
-    def load_state_dict(self, dict, **kwargs):
+    # def load_state_dict(self, dict, **kwargs):
+    #     newp = dict["means"].shape[0]
+    #     self.identity_vec = torch.nn.Parameter(torch.rand(newp, 16, device=self.device))
+    #     super().load_state_dict(dict, **kwargs)
+
+    def load_state_dict(self, dict, **kwargs):  # type: ignore
+        # resize the parameters to match the new number of points
+        self.step = 30000
         newp = dict["means"].shape[0]
+        self.means = torch.nn.Parameter(torch.zeros(newp, 3, device=self.device))
+        self.scales = torch.nn.Parameter(torch.zeros(newp, 3, device=self.device))
+        self.quats = torch.nn.Parameter(torch.zeros(newp, 4, device=self.device))
+        self.opacities = torch.nn.Parameter(torch.zeros(newp, 1, device=self.device))
+        self.features_dc = torch.nn.Parameter(torch.zeros(newp, 3, device=self.device))
+        self.features_rest = torch.nn.Parameter(
+            torch.zeros(newp, num_sh_bases(self.config.sh_degree) - 1, 3, device=self.device)
+        )
         self.identity_vec = torch.nn.Parameter(torch.rand(newp, 16, device=self.device))
         super().load_state_dict(dict, **kwargs)
     
@@ -451,34 +475,41 @@ class GS3DSeg(SplatfactoModel):
         )
         return culls
     
+    def identity_loss(self, outputs, batch):
+        predicted_identity = outputs['identity']
+        print(self.identity[0, :, :])
+        gt_identity = self.identity[batch['image_idx'], :, :]
+        assert predicted_identity.shape[:2] == gt_identity.shape[:2]
+        predicted_identity = predicted_identity.reshape(-1, 16)
+        gt_identity = gt_identity.reshape(-1)
 
-    def dup_in_optim(self, optimizer, dup_mask, new_params, n=2):
+        num_masks = torch.max(gt_identity)
+        Pos, Neg = torch.tensor([0.], device=DEVICE), torch.tensor([0.], device=DEVICE)
+        for i in range(num_masks):
+            print(gt_identity)
+            mask = gt_identity == i
+            print(mask)
+            _pos_matrix = predicted_identity[mask]
+            print(_pos_matrix)
+
+            pos_matrix = torch.mm(_pos_matrix, _pos_matrix.T)
+            assert torch.all(pos_matrix <= 1.1)
+            Pos += torch.mean(1 - pos_matrix)
+            neg_matrix = predicted_identity[~mask]
+            neg_matrix = torch.mm(neg_matrix, _pos_matrix.T)
+            assert all(neg_matrix <= 1.1)
+            neg_matrix = torch.nn.ReLU()(neg_matrix - 0.5)
+            Neg += torch.mean(neg_matrix)
+        return Pos, Neg
+
+
+
+
         
-        """adds the parameters to the optimizer"""
-        param = optimizer.param_groups[0]["params"][0]
-        param_state = optimizer.state[param]
-        print(optimizer.state[param])
-        repeat_dims = (n,) + tuple(1 for _ in range(param_state["exp_avg"].dim() - 1))
-        param_state["exp_avg"] = torch.cat(
-            [
-                param_state["exp_avg"],
-                torch.zeros_like(param_state["exp_avg"][dup_mask.squeeze()]).repeat(*repeat_dims),
-            ],
-            dim=0,
-        )
-        param_state["exp_avg_sq"] = torch.cat(
-            [
-                param_state["exp_avg_sq"],
-                torch.zeros_like(param_state["exp_avg_sq"][dup_mask.squeeze()]).repeat(*repeat_dims),
-            ],
-            dim=0,
-        )
-        del optimizer.state[param]
-        optimizer.state[new_params[0]] = param_state
-        optimizer.param_groups[0]["params"] = new_params
-        del param
+    def get_loss_dict(self, outputs, batch, metrics_dict=None) -> Dict[str, torch.Tensor]:
+        loss_dict = super().get_loss_dict(outputs, batch, metrics_dict)
+        pos, neg = self.identity_loss(outputs, batch)
+        loss_dict['identity_loss'] = pos + neg
 
-    def dup_in_all_optim(self, optimizers, dup_mask, n):
-        param_groups = self.get_gaussian_param_groups()
-        for group, param in param_groups.items():
-            self.dup_in_optim(optimizers.optimizers[group], dup_mask, param, n)
+        return loss_dict
+

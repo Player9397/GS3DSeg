@@ -12,7 +12,9 @@ from nerfstudio.data.datamanagers.full_images_datamanager import (
     FullImageDatamanagerConfig,
     FullImageDatamanager
 )
-
+import numpy as np
+import os
+from tqdm import tqdm
 @dataclass
 class GS3DSegDataManagerConfig(FullImageDatamanagerConfig):
 
@@ -45,15 +47,24 @@ class GS3DSegDataManager(FullImageDatamanager):
         self.editing_unseen_cameras = [i for i in range(len(self.train_dataset))]
         self.train_image_list = self.train_dataset.image_filenames
         self.eval_image_list  = self.eval_dataset.image_filenames
+        # enter path to Sam embeddings
+        embd_path = '/scratch/ashwin/gsplat/waldo_kitchen/Sam_annotations'
+        self.train_image_list  = [p.name for p in self.train_image_list]
+        torch_embd = torch.ones([1,738, 994 ])
+        for im in tqdm(self.train_image_list):
+            embd = torch.from_numpy(np.load(embd_path+'/'+im+'.npy'))
+            torch_embd = torch.cat([torch_embd, embd.unsqueeze(0)], dim=0)
+        self.torch_embd = torch_embd[1:, :, :].type(dtype=torch.uint8)
+        np.save(embd_path+'/'+'final.npy', self.torch_embd.cpu().numpy())
 
-        
+
     def next_train_idx(self, idx: int) -> Tuple[Cameras, Dict]:
         """Returns the next training batch
 
         Returns a Camera instead of raybundle"""
         data = deepcopy(self.cached_train[idx])
         data["image"] = data["image"].to(self.device)
-
+        data["identity"] = self.torch_embd[idx, :, :]
         assert len(self.train_dataset.cameras.shape) == 1, "Assumes single batch dimension"
         camera = self.train_dataset.cameras[idx : idx + 1].to(self.device)
         if camera.metadata is None:
