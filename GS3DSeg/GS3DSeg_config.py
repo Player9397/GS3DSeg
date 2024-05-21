@@ -31,8 +31,9 @@ GS3DSeg_method = MethodSpecification(
         mixed_precision=False,
         pipeline=GS3DSegPipelineConfig(
             datamanager=GS3DSegDataManagerConfig(
-                dataparser=NerfstudioDataParserConfig(load_3D_points=True),
+                dataparser=NerfstudioDataParserConfig(downscale_factor = 8,load_3D_points=True),
                 cache_images_type="uint8",
+                
             ),
             model=GS3DSegConfig(),
         ),

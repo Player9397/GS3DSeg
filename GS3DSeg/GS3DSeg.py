@@ -18,6 +18,8 @@ from gsplat.project_gaussians import project_gaussians
 from gsplat.rasterize import rasterize_gaussians
 from gsplat.sh import spherical_harmonics
 from tqdm import tqdm
+from nerfstudio.cameras.camera_optimizers import CameraOptimizer, CameraOptimizerConfig
+import torch.bin
 DEVICE = 'cuda'
 # need following import for background color override
 from nerfstudio.model_components import renderers
@@ -45,6 +47,9 @@ def projection_matrix(znear, zfar, fovx, fovy, device: Union[str, torch.device] 
 @dataclass
 class GS3DSegConfig(SplatfactoModelConfig):
     _target: Type = field(default_factory=lambda: GS3DSeg)
+    camera_optimizer: CameraOptimizerConfig = field(default_factory=lambda: CameraOptimizerConfig(mode="off"))
+    num_random = 50000
+
 
 
 class GS3DSeg(SplatfactoModel):
@@ -53,10 +58,17 @@ class GS3DSeg(SplatfactoModel):
 
     def populate_modules(self):
         super().populate_modules()
+        self.epoch = 1
         self.identity_vec = torch.nn.Parameter(torch.rand([self.num_points, 16]))
          # enter path to Sam embeddings
-        self.embd_path = '/scratch/ashwin/gsplat/waldo_kitchen/Sam_annotations/final.npy'
+        self.embd_path = '/scratch/ashwin/gsplat/scene1/Sam_annotations/final.npy'
         self.identity = torch.from_numpy(np.load(self.embd_path)).to(DEVICE).type(torch.uint8)
+        num_images = self.identity.shape[0]
+        self.identity = self.identity.reshape(num_images, -1)
+        self.camera_optimizer: CameraOptimizer = self.config.camera_optimizer.setup(
+            num_cameras=self.num_train_data, device="cpu"
+        )
+        
         # self.train_image_list  = [p.name for p in self.train_image_list]
         # torch_embd = torch.ones([1,738, 994 ])
         # for im in tqdm(self.train_image_list):
@@ -479,9 +491,6 @@ class GS3DSeg(SplatfactoModel):
         predicted_identity = outputs['identity']
         gt_identity = self.identity[batch['image_idx'], :, :]
         assert predicted_identity.shape[:2] == gt_identity.shape[:2]
-        # predicted_identity = predicted_identity.reshape(-1, 16)
-        # gt_identity = gt_identity.reshape(-1)
-
         num_masks = torch.max(gt_identity)
         Pos, Neg = torch.tensor([0.], device=DEVICE), torch.tensor([0.], device=DEVICE)
         for i in range(num_masks):
@@ -500,15 +509,42 @@ class GS3DSeg(SplatfactoModel):
             neg_matrix = torch.nn.ReLU()(neg_matrix - 0.5)
             Neg += torch.mean(neg_matrix)
         return Pos, Neg
-
-
+    
+    def identity_loss_optimised(self, pred_identity, image_id):
+        # pred_identity ---> HW x 16
+        pred_identity = pred_identity.view(-1, 16)
+        #randomly extracting freatures index
+        rand_ind = torch.randperm(pred_identity.shape[0])[:10_000]
+        pred_identity = pred_identity[rand_ind]
+        identity = self.identity[image_id][rand_ind]
+        sorted_index, indices = torch.sort(identity)
+        num_masks = torch.bincount(sorted_index)
+        cumsum_index = torch.cumsum(num_masks, dim=0)
+        pred_identity_ordered = torch.gather(pred_identity, dim=0, index=indices.view(-1, 1).expand(-1, 16))
+        identity_vec_oredered = torch.nn.functional.normalize(pred_identity_ordered, dim=-1)
+        x = torch.mm(identity_vec_oredered, identity_vec_oredered.T)
+        start = 0
+        sim_loss = 0.
+        dis_loss = 0.
+        for end in cumsum_index:
+            if start == end:
+                continue
+            sim_loss += torch.mean(1 - x[start:end, start:end])
+            if end == x.shape[1]:
+                pass
+            else:
+                dis_loss += torch.mean(torch.nn.ReLU()(x[start:end, end:]- 0.5)) 
+            start = end
+        return sim_loss+dis_loss
 
 
         
     def get_loss_dict(self, outputs, batch, metrics_dict=None) -> Dict[str, torch.Tensor]:
         loss_dict = super().get_loss_dict(outputs, batch, metrics_dict)
-        pos, neg = self.identity_loss(outputs, batch)
-        loss_dict['identity_loss'] = pos + neg
-
+        self.epoch += 1
+        if self.epoch > 20000 or self.epoch<5:
+            loss = self.identity_loss_optimised(outputs["identity"], batch['image_idx'])
+            loss_dict['identity_loss'] = loss
         return loss_dict
+
 

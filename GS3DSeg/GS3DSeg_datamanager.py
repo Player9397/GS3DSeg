@@ -48,9 +48,9 @@ class GS3DSegDataManager(FullImageDatamanager):
         self.train_image_list = self.train_dataset.image_filenames
         self.eval_image_list  = self.eval_dataset.image_filenames
         # enter path to Sam embeddings
-        embd_path = '/scratch/ashwin/gsplat/waldo_kitchen/Sam_annotations'
+        embd_path = '/scratch/ashwin/gsplat/scene1/Sam_annotations'
         self.train_image_list  = [p.name for p in self.train_image_list]
-        torch_embd = torch.ones([1,738, 994 ])
+        torch_embd = torch.ones([1,270, 480 ])
         for im in tqdm(self.train_image_list):
             embd = torch.from_numpy(np.load(embd_path+'/'+im+'.npy'))
             torch_embd = torch.cat([torch_embd, embd.unsqueeze(0)], dim=0)
