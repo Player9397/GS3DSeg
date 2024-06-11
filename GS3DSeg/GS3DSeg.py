@@ -24,6 +24,8 @@ DEVICE = 'cuda'
 # need following import for background color override
 from nerfstudio.model_components import renderers
 from nerfstudio.utils.rich_utils import CONSOLE
+
+EMBD = 16
 def projection_matrix(znear, zfar, fovx, fovy, device: Union[str, torch.device] = "cpu"):
     """
     Constructs an OpenGL-style perspective projection matrix.
@@ -59,9 +61,9 @@ class GS3DSeg(SplatfactoModel):
     def populate_modules(self):
         super().populate_modules()
         self.epoch = 1
-        self.identity_vec = torch.nn.Parameter(torch.rand([self.num_points, 16]))
+        self.identity_vec = torch.nn.Parameter(torch.rand([self.num_points, EMBD]))
          # enter path to Sam embeddings
-        self.embd_path = '/scratch/ashwin/gsplat/scene1/Sam_annotations/final.npy'
+        self.embd_path = '/scratch/ashwin/gsplat/waldo_kitchen/Sam_annotations/final.npy'
         self.identity = torch.from_numpy(np.load(self.embd_path)).to(DEVICE).type(torch.uint8)
         num_images = self.identity.shape[0]
         self.identity = self.identity.reshape(num_images, -1)
@@ -93,7 +95,7 @@ class GS3DSeg(SplatfactoModel):
         self.features_rest = torch.nn.Parameter(
             torch.zeros(newp, num_sh_bases(self.config.sh_degree) - 1, 3, device=self.device)
         )
-        self.identity_vec = torch.nn.Parameter(torch.rand(newp, 16, device=self.device))
+        self.identity_vec = torch.nn.Parameter(torch.rand(newp, EMBD, device=self.device))
         super().load_state_dict(dict, **kwargs)
     
     def get_gaussian_param_groups(self) -> Dict[str, List[Parameter]]:
@@ -264,7 +266,7 @@ class GS3DSeg(SplatfactoModel):
             torch.sigmoid(opacities_crop),
             H,
             W,
-            background=torch.ones(16, device=self.device) * 10,
+            background=torch.ones(EMBD, device=self.device) * 10,
         )
         data['identity'] = identity
         return data # type: ignore
@@ -495,13 +497,13 @@ class GS3DSeg(SplatfactoModel):
         Pos, Neg = torch.tensor([0.], device=DEVICE), torch.tensor([0.], device=DEVICE)
         for i in range(num_masks):
             mask = gt_identity.view(-1) == i
-            _pos_matrix = predicted_identity.view(-1, 16)[mask]
+            _pos_matrix = predicted_identity.view(-1, EMBD)[mask]
             _pos_matrix = _pos_matrix[torch.randperm(_pos_matrix.shape[0])[:100]]
             _pos_matrix = torch.nn.functional.normalize(_pos_matrix, dim=1)
             pos_matrix = torch.mm(_pos_matrix, _pos_matrix.T)
             # assert torch.all(pos_matrix <= 1.5)
             Pos += torch.mean(1 - pos_matrix)
-            neg_matrix = predicted_identity.view(-1, 16)[~mask]
+            neg_matrix = predicted_identity.view(-1, EMBD)[~mask]
             neg_matrix = neg_matrix[torch.randperm(neg_matrix.shape[0])[:200]]
             neg_matrix = torch.nn.functional.normalize(neg_matrix, dim=1)
             neg_matrix = torch.mm(neg_matrix, _pos_matrix.T)
@@ -511,8 +513,8 @@ class GS3DSeg(SplatfactoModel):
         return Pos, Neg
     
     def identity_loss_optimised(self, pred_identity, image_id):
-        # pred_identity ---> HW x 16
-        pred_identity = pred_identity.view(-1, 16)
+        # pred_identity ---> HW x EMBD
+        pred_identity = pred_identity.view(-1, EMBD)
         #randomly extracting freatures index
         rand_ind = torch.randperm(pred_identity.shape[0])[:10_000]
         pred_identity = pred_identity[rand_ind]
@@ -520,7 +522,7 @@ class GS3DSeg(SplatfactoModel):
         sorted_index, indices = torch.sort(identity)
         num_masks = torch.bincount(sorted_index)
         cumsum_index = torch.cumsum(num_masks, dim=0)
-        pred_identity_ordered = torch.gather(pred_identity, dim=0, index=indices.view(-1, 1).expand(-1, 16))
+        pred_identity_ordered = torch.gather(pred_identity, dim=0, index=indices.view(-1, 1).expand(-1, EMBD))
         identity_vec_oredered = torch.nn.functional.normalize(pred_identity_ordered, dim=-1)
         x = torch.mm(identity_vec_oredered, identity_vec_oredered.T)
         start = 0
@@ -542,9 +544,9 @@ class GS3DSeg(SplatfactoModel):
     def get_loss_dict(self, outputs, batch, metrics_dict=None) -> Dict[str, torch.Tensor]:
         loss_dict = super().get_loss_dict(outputs, batch, metrics_dict)
         self.epoch += 1
-        if self.epoch > 20000 or self.epoch<5:
-            loss = self.identity_loss_optimised(outputs["identity"], batch['image_idx'])
-            loss_dict['identity_loss'] = loss
+    # if self.epoch > 5000 or self.epoch<5:
+        loss = self.identity_loss_optimised(outputs["identity"], batch['image_idx'])
+        loss_dict['identity_loss'] = loss
         return loss_dict
 
 

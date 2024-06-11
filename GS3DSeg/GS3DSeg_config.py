@@ -29,9 +29,10 @@ GS3DSeg_method = MethodSpecification(
         steps_per_eval_all_images=1000,
         max_num_iterations=30000,
         mixed_precision=False,
+        # '''downscale_factor = 8,'''
         pipeline=GS3DSegPipelineConfig(
             datamanager=GS3DSegDataManagerConfig(
-                dataparser=NerfstudioDataParserConfig(downscale_factor = 8,load_3D_points=True),
+                dataparser=NerfstudioDataParserConfig( load_3D_points=True),
                 cache_images_type="uint8",
                 
             ),
